@@ -41,13 +41,16 @@ void inthand(int signum) {
 
 int main(int argc, char **argv) {
         puts("[>] iof - IO port fuzzer");
-	long custom_seed = 0;
+	uint32_t custom_seed = 0;
+
 	if ( argc == 2 ) {
 		custom_seed = atol(argv[1]);
 	}
-        uint32_t seed = getSeed();
+        uint32_t seed = 0;
 	if ( custom_seed != 0 ) {
 		seed = custom_seed;
+	} else {
+		seed = getSeed();
 	}
         printf("[+] Using random seed: %u\n", seed);
         srandom(seed);

@@ -13,4 +13,4 @@ build-poc:
 poc: gen-poc build-poc run-poc
 
 clean:
-	rm -f ./iof ./poc/*.{c,bin}
+	rm -rf ./iof ./poc/*.{c,bin} fuzz.id __pycache__
