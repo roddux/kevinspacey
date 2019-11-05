@@ -1,0 +1,17 @@
+create / adapt a kernel module that allows user-space access to DMA memory
+use for fuzzing
+
+ref: chipsec, linux drivers, etc
+
+read how the linux ata-piix libata drivers etc handle DMA access
+
+the goal is to be able to re-create reading a file by using custom tooling, so we
+can then throw spanners in the works here and there.
+
+alternate short-term goal:
+- adapt the existing drivers and throw random if(RANDOM) byte flips in 
+- write a program to make a load of FS noise, triggering the above
+
+alternate-alternate goal:
+- write a module to *hook* the existing functions
+- randomly bitflip, etc
