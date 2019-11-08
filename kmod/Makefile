@@ -4,7 +4,7 @@ EXTRA_CFLAGS += -I$(src)
 ifeq ($(KERNELRELEASE),)
 # out of kernel
 
-MODULE_SOURCES := fopskit.c newmod.c
+MODULE_SOURCES := fopskit.c newmod.c kernbitflip.c
 
 all: $(MODULE_NAME).ko
 
@@ -33,6 +33,6 @@ else
 ccflags-y :=  -I$(src)
 
 obj-m := $(MODULE_NAME).o
-$(MODULE_NAME)-y := fopskit.o newmod.o
+$(MODULE_NAME)-y := fopskit.o newmod.o kernbitflip.o
 
 endif

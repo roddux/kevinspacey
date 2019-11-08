@@ -12,6 +12,8 @@ MODULE_DESCRIPTION("kvsp");
 #define ATA_CMD_FPDMA_WRITE 0x61
 #define ATA_CMD_PACKET 0xA0
 
+void bitflip(void *, unsigned int);
+
 // ata_qc_issue, in our case, calls ahci_qc_issue
 // that's what we wanna look at for hardware operations
 // also ahci_qc_prep, ahci_fill_cmd_slot ...
@@ -55,10 +57,15 @@ fopskit_hook_handler(ata_qc_issue) {
 	}
 
 	struct ata_queued_cmd CMDBU;
-	CMDBU = CMD;
-	for (i=0;i<100;i++) {
-		fuzz(&CMD);
-		ahci_qc_issue(CMD);
+	CMDBU = *CMD;
+	unsigned short i;
+
+	unsigned int *(*ahciqci_p)(struct ata_queued_cmd *qc);
+	ahciqci_p = kallsyms_lookup_name("ahci_qc_issue");
+
+	for(i=0; i<100; i++) {
+		bitflip(CMD, sizeof(*CMD));
+		ahciqci_p(CMD);
 	}
 	// TF->command = ATA_CMD_FPDMA_READ;
 	// this kills the crab^H^H^H^Hvm
