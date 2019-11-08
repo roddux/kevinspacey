@@ -1,8 +1,8 @@
 default:
-	gcc -Wall -Wextra -Wpedantic iof.c -o iof
+	rm -f ./bf; gcc -g -std=c2x -Wall -Wextra -Wpedantic -Wno-unused-parameter bitflip.c -o bf && ./bf
 
 gen-poc:
-	python test.py
+	python  single_poc_gen.py
 
 run-poc:
 	./util/pocr.sh
