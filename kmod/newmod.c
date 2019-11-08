@@ -1,4 +1,5 @@
 #include <linux/module.h>
+#include <linux/random.h>
 #include <linux/libata.h>
 #include "fopskit.h"
 
@@ -11,6 +12,8 @@ MODULE_DESCRIPTION("kvsp");
 #define ATA_CMD_FPDMA_READ 0x60
 #define ATA_CMD_FPDMA_WRITE 0x61
 #define ATA_CMD_PACKET 0xA0
+#define ATA_CMD_READ 0xC8
+#define ATA_CMD_WRITE 0xCA
 
 void bitflip(void *, unsigned int);
 
@@ -22,12 +25,6 @@ void bitflip(void *, unsigned int);
 // which means we can short-circuit ata_qc_issue
 // just use our hook to fuzz the ata_queued_cmd struct, then
 // return directly to ahci_qc_issue.
-
-void fuzz(void *data) {
-	// we know sizeof() is sizeof(ata_queued_cmd), so we can cheat
-	// seek to a random offset using getrandom()
-	// call getrandom() passing *data as an argument, overwriting a few bits
-}
 
 fopskit_hook_handler(ata_qc_issue) {
 //	This hook runs before the main ata_qc_issue code does
@@ -51,22 +48,40 @@ fopskit_hook_handler(ata_qc_issue) {
 		case ATA_CMD_PACKET:
 			printk("kvsp: ata_qc_issue cmd %X (ATA_CMD_PACKET)",TF->command);
 			break;
+		case ATA_CMD_READ:
+			printk("kvsp: ata_qc_issue cmd %X (ATA_CMD_READ)",TF->command);
+			break;
+		case ATA_CMD_WRITE:
+			printk("kvsp: ata_qc_issue cmd %X (ATA_CMD_WRITE)",TF->command);
+			break;
 		default:
 			printk("kvsp: ata_qc_issue cmd %X (not defined)",TF->command);
 			break;
 	}
 
-	struct ata_queued_cmd CMDBU;
-	CMDBU = *CMD;
-	unsigned short i;
+	//struct ata_queued_cmd CMDBU;
+	//CMDBU = *CMD;
 
 	unsigned int *(*ahciqci_p)(struct ata_queued_cmd *qc);
 	ahciqci_p = kallsyms_lookup_name("ahci_qc_issue");
 
-	for(i=0; i<100; i++) {
-		bitflip(CMD, sizeof(*CMD));
-		ahciqci_p(CMD);
+	unsigned short X;
+	get_random_bytes(&X, sizeof(X));
+	if(X%3 == 0) {
+		unsigned short i;
+		//for(i=0; i<100; i++) {
+			//bitflip(CMD, sizeof(struct ata_queued_cmd));
+			bitflip(TF, sizeof(struct ata_taskfile));
+			//ahciqci_p(CMD);
+			printk("kvsp: issued fuzzed taskfile");
+		//}
 	}
+	//unsigned short X;
+	//get_random_bytes(&X, sizeof(X));
+	//if(X%3 == 0) {
+	//	printk("kvsp: flipping a bit");
+	//	bitflip(CMD, sizeof(struct ata_queued_cmd));
+	//}
 	// TF->command = ATA_CMD_FPDMA_READ;
 	// this kills the crab^H^H^H^Hvm
 }
