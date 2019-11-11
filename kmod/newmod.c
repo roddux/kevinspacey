@@ -19,7 +19,7 @@ MODULE_DESCRIPTION("kvsp");
 void bitflip(void *, unsigned int);
 
 // used to hijack with ftrace after we've done shit
-unsigned int noret(void) {return 0;}
+unsigned int noret(struct ata_queued_cmd *qc){return 0;}
 
 // ata_qc_issue, in our case, calls ahci_qc_issue
 // that's what we wanna look at for hardware operations
@@ -30,55 +30,55 @@ unsigned int noret(void) {return 0;}
 // just use our hook to fuzz the ata_queued_cmd struct, then
 // return directly to ahci_qc_issue.
 
-fopskit_hook_handler(ata_qc_issue) {
-//	This hook runs before the main ata_qc_issue code does
-//	Which means we can fuck with all it's arguments
-
-	struct ata_queued_cmd *CMD = REGS_ARG1;
+//fopskit_hook_handler(ata_qc_issue) {
+fopskit_hook_handler(ahci_qc_issue) {
+	struct ata_queued_cmd *CMD = (struct ata_queued_cmd*)REGS_ARG1;
 //	printk("ata_queued_cmd: %X", &CMD);
 	struct ata_taskfile *TF = &CMD->tf;
 //	printk("taskfile: %X", &TF);
 
 	switch (TF->command) {
 		case ATA_CMD_FLUSH:
-			printk("kvsp: ata_qc_issue cmd %X (ATA_CMD_FLUSH)",TF->command);
+			printk("kvsp: ahci_qc_issue cmd %X (ATA_CMD_FLUSH)",TF->command);
 			break;
 		case ATA_CMD_FPDMA_READ:
-			printk("kvsp: ata_qc_issue cmd %X (ATA_CMD_FPDMA_READ)",TF->command);
+			printk("kvsp: ahci_qc_issue cmd %X (ATA_CMD_FPDMA_READ)",TF->command);
 			break;
 		case ATA_CMD_FPDMA_WRITE:
-			printk("kvsp: ata_qc_issue cmd %X (ATA_CMD_FPDMA_WRITE)",TF->command);
+			printk("kvsp: ahci_qc_issue cmd %X (ATA_CMD_FPDMA_WRITE)",TF->command);
 			break;
 		case ATA_CMD_PACKET:
-			printk("kvsp: ata_qc_issue cmd %X (ATA_CMD_PACKET)",TF->command);
+			printk("kvsp: ahci_qc_issue cmd %X (ATA_CMD_PACKET)",TF->command);
 			break;
 		case ATA_CMD_READ:
-			printk("kvsp: ata_qc_issue cmd %X (ATA_CMD_READ)",TF->command);
+			printk("kvsp: ahci_qc_issue cmd %X (ATA_CMD_READ)",TF->command);
 			break;
 		case ATA_CMD_WRITE:
-			printk("kvsp: ata_qc_issue cmd %X (ATA_CMD_WRITE)",TF->command);
+			printk("kvsp: ahci_qc_issue cmd %X (ATA_CMD_WRITE)",TF->command);
 			break;
 		default:
-			printk("kvsp: ata_qc_issue cmd %X (not defined)",TF->command);
+			printk("kvsp: ahci_qc_issue cmd %X (not defined)",TF->command);
 			break;
 	}
 
 	//struct ata_queued_cmd CMDBU;
 	//CMDBU = *CMD;
 
-	unsigned int *(*ahciqci_p)(struct ata_queued_cmd *qc);
-	ahciqci_p = kallsyms_lookup_name("ahci_qc_issue");
+	//unsigned int *(*ahciqci_p)(struct ata_queued_cmd *qc);
+	//ahciqci_p = kallsyms_lookup_name("ahci_qc_issue");
 
 	unsigned short X;
 	get_random_bytes(&X, sizeof(X));
-	if(X%3 == 0) {
+//	if(X%3 == 0) {
 		// literally do the actions of ahci_qc_issue ourselves
 		// and then alter return flow, so the original isn't run
+		printk("kvsp: ahci_qc_issue");
 		struct ata_port *ap = CMD->ap;
 		void __iomem *port_mmio = ahci_port_base(ap);
 		struct ahci_port_priv *pp = ap->private_data;
 		pp->active_link = CMD->dev->link;
 		if (ata_is_ncq(CMD->tf.protocol))
+			if(X%3 == 0) bitflip(CMD->hw_tag, sizeof(CMD->hw_tag));
 			writel(1 << CMD->hw_tag, port_mmio + PORT_SCR_ACT);
 		if (pp->fbs_enabled && pp->fbs_last_dev != CMD->dev->link->pmp) {
 			u32 fbs = readl(port_mmio + PORT_FBS);
@@ -97,7 +97,7 @@ fopskit_hook_handler(ata_qc_issue) {
 			//ahciqci_p(CMD);
 			//printk("kvsp: issued fuzzed taskfile");
 		//}
-	}
+//	}
 	//unsigned short X;
 	//get_random_bytes(&X, sizeof(X));
 	//if(X%3 == 0) {
@@ -109,18 +109,18 @@ fopskit_hook_handler(ata_qc_issue) {
 }
 
 // TODO: Remove the fopskit helper functions and use ftrace directly (?)
-struct fops_hook hook_ata_qc_issue = fops_hook_val(ata_qc_issue);
+struct fops_hook hook_ahci_qc_issue = fops_hook_val(ahci_qc_issue);
 
 static int __init test_init(void) {
 	printk("kvsp: hooking...");
-	fopskit_sym_hook(&hook_ata_qc_issue);
+	fopskit_sym_hook(&hook_ahci_qc_issue);
 	printk("kvsp: okay!");
 	return 0;
 }
 
 static void __exit test_exit(void) {
 	printk("kvsp: unhooking...");
-	fopskit_sym_unhook(&hook_ata_qc_issue);
+	fopskit_sym_unhook(&hook_ahci_qc_issue);
 	printk("kvsp: bye!");
 }
 
