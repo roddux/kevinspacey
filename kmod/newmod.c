@@ -2,6 +2,7 @@
 #include <linux/random.h>
 #include <linux/libata.h>
 #include "fopskit.h"
+#include "ahci_l.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("roddux");
@@ -16,6 +17,9 @@ MODULE_DESCRIPTION("kvsp");
 #define ATA_CMD_WRITE 0xCA
 
 void bitflip(void *, unsigned int);
+
+// used to hijack with ftrace after we've done shit
+unsigned int noret(void) {return 0;}
 
 // ata_qc_issue, in our case, calls ahci_qc_issue
 // that's what we wanna look at for hardware operations
@@ -68,12 +72,30 @@ fopskit_hook_handler(ata_qc_issue) {
 	unsigned short X;
 	get_random_bytes(&X, sizeof(X));
 	if(X%3 == 0) {
-		unsigned short i;
+		// literally do the actions of ahci_qc_issue ourselves
+		// and then alter return flow, so the original isn't run
+		struct ata_port *ap = CMD->ap;
+		void __iomem *port_mmio = ahci_port_base(ap);
+		struct ahci_port_priv *pp = ap->private_data;
+		pp->active_link = CMD->dev->link;
+		if (ata_is_ncq(CMD->tf.protocol))
+			writel(1 << CMD->hw_tag, port_mmio + PORT_SCR_ACT);
+		if (pp->fbs_enabled && pp->fbs_last_dev != CMD->dev->link->pmp) {
+			u32 fbs = readl(port_mmio + PORT_FBS);
+			fbs &= ~(PORT_FBS_DEV_MASK | PORT_FBS_DEC);
+			fbs |= CMD->dev->link->pmp << PORT_FBS_DEV_OFFSET;
+			writel(fbs, port_mmio + PORT_FBS);
+			pp->fbs_last_dev = CMD->dev->link->pmp;
+		}
+		writel(1 << CMD->hw_tag, port_mmio + PORT_CMD_ISSUE);
+		regs->ip = (unsigned long) noret;
+		return;
+		//unsigned short i;
 		//for(i=0; i<100; i++) {
 			//bitflip(CMD, sizeof(struct ata_queued_cmd));
-			bitflip(TF, sizeof(struct ata_taskfile));
+			//bitflip(TF, sizeof(struct ata_taskfile));
 			//ahciqci_p(CMD);
-			printk("kvsp: issued fuzzed taskfile");
+			//printk("kvsp: issued fuzzed taskfile");
 		//}
 	}
 	//unsigned short X;
