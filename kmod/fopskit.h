@@ -7,6 +7,7 @@
 #define REGS_ARG1 regs->di
 #define REGS_ARG2 regs->si
 #define REGS_ARG3 regs->dx
+#define REGS_ARG4 regs->cx
 
 #if !defined(CONFIG_SECURITY) || !defined(CONFIG_FUNCTION_TRACER)
 #error "This module requires both CONFIG_SECURITY and CONFIG_FUNCTION_TRACER kernel options to be enabled"

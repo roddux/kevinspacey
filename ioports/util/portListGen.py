@@ -17,6 +17,6 @@ for RANGE in portList:
 	for Q in range(end-start):
 		PORTS += [str(hex(Q+start)), ]
 
-PORTLIST = f"uint16_t portList[] = {{{','.join(PORTS)}}}\n#define PORTLISTLEN {len(PORTS)}\n"
+PORTLIST = f"uint16_t portList[] = {{{','.join(PORTS)}}};\n#define PORTLISTLEN {len(PORTS)}\n"
 
 print(PORTLIST)

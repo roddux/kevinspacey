@@ -3,6 +3,7 @@
 #include <linux/libata.h>
 #include "fopskit.h"
 #include "ahci_l.h"
+#include <scsi/scsi_cmnd.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("roddux");
@@ -16,27 +17,54 @@ MODULE_DESCRIPTION("kvsp");
 #define ATA_CMD_READ 0xC8
 #define ATA_CMD_WRITE 0xCA
 
+#define ATA_XXX 0xEC
+#define ATA_YYY 0xEF
+
 void bitflip(void *, unsigned int);
 
 // used to hijack with ftrace after we've done shit
 unsigned int noret(struct ata_queued_cmd *qc){return 0;}
 
-// ata_qc_issue, in our case, calls ahci_qc_issue
-// that's what we wanna look at for hardware operations
-// also ahci_qc_prep, ahci_fill_cmd_slot ...
+fopskit_hook_handler(ata_tf_to_fis) {
+	const struct ata_taskfile *tf = (const struct ata_taskfile *) REGS_ARG1;
+	unsigned char pmp = (unsigned char) REGS_ARG2;
+	int is_cmd = (int) REGS_ARG3;
+	unsigned char *fis = (unsigned char *) REGS_ARG4;
 
-// amusingly, ahci_qc_issue takes exactly the same input as ata_qc_issue
-// which means we can short-circuit ata_qc_issue
-// just use our hook to fuzz the ata_queued_cmd struct, then
-// return directly to ahci_qc_issue.
+//	printk("kvsp: ata_tf_to_fis, fis is at %X? (%x)\n", &fis, fis[0]);
+
+	// Get pointer to the original command, so we can run it afterwards
+	unsigned int *(*atatf2fis_p) (
+		const struct ata_taskfile *tf,
+		unsigned char pmp,
+		int is_cmd,
+		unsigned char *fis
+	);
+
+	// Orig function pointer
+	atatf2fis_p = kallsyms_lookup_name("ata_tf_to_fis");
+//	printk("kvsp: running ata_tf_to_fis\n");
+	// run it first, then fuzz data after
+	atatf2fis_p(REGS_ARG1, REGS_ARG2, REGS_ARG3, REGS_ARG4);
+
+	// Fuzz 20% of the time ¯\_(^-^)_/¯
+	unsigned short X;
+	get_random_bytes(&X, sizeof(X));
+	if(X%5 == 0) {
+		bitflip(fis, 20); // fis[0] to fis[19]
+	}
+	fis[0] = 0x27; // still a h2d fis
+
+//	printk("kvsp: now fuzzing fis\n");
+}
 
 //fopskit_hook_handler(ata_qc_issue) {
 fopskit_hook_handler(ahci_qc_issue) {
+	int dontfuzz = 0;
 	struct ata_queued_cmd *CMD = (struct ata_queued_cmd*)REGS_ARG1;
-//	printk("ata_queued_cmd: %X", &CMD);
 	struct ata_taskfile *TF = &CMD->tf;
-//	printk("taskfile: %X", &TF);
 
+#if 0
 	switch (TF->command) {
 		case ATA_CMD_FLUSH:
 			printk("kvsp: ahci_qc_issue cmd %X (ATA_CMD_FLUSH)",TF->command);
@@ -56,48 +84,42 @@ fopskit_hook_handler(ahci_qc_issue) {
 		case ATA_CMD_WRITE:
 			printk("kvsp: ahci_qc_issue cmd %X (ATA_CMD_WRITE)",TF->command);
 			break;
+		case ATA_XXX: // skip some known-breaking ones
+		case ATA_YYY:
+			printk("kvsp: ahci_qc_issue cmd %X (ATA_XXX/YYY)",TF->command);
+			dontfuzz = 1;
+			break;
 		default:
 			printk("kvsp: ahci_qc_issue cmd %X (not defined)",TF->command);
 			break;
 	}
+#endif
 
-	//struct ata_queued_cmd CMDBU;
-	//CMDBU = *CMD;
+	struct ata_queued_cmd CMDBU;
+	CMDBU = *CMD;
 
-	//unsigned int *(*ahciqci_p)(struct ata_queued_cmd *qc);
-	//ahciqci_p = kallsyms_lookup_name("ahci_qc_issue");
+	// hey lets try and fuzz ahci_fill_cmd_slot
 
+	// Get pointer to the original command, so we can run it afterwards
+	unsigned int *(*ahciqci_p)(struct ata_queued_cmd *qc);
+	ahciqci_p = kallsyms_lookup_name("ahci_qc_issue");
+
+	if (dontfuzz) {
+		return ahciqci_p(CMD);
+	}
+
+	// Fuzz 30% of the time ¯\_(^-^)_/¯
 	unsigned short X;
 	get_random_bytes(&X, sizeof(X));
-//	if(X%3 == 0) {
-		// literally do the actions of ahci_qc_issue ourselves
-		// and then alter return flow, so the original isn't run
-		printk("kvsp: ahci_qc_issue");
-		struct ata_port *ap = CMD->ap;
-		void __iomem *port_mmio = ahci_port_base(ap);
-		struct ahci_port_priv *pp = ap->private_data;
-		pp->active_link = CMD->dev->link;
-		if (ata_is_ncq(CMD->tf.protocol))
-			if(X%3 == 0) bitflip(CMD->hw_tag, sizeof(CMD->hw_tag));
-			writel(1 << CMD->hw_tag, port_mmio + PORT_SCR_ACT);
-		if (pp->fbs_enabled && pp->fbs_last_dev != CMD->dev->link->pmp) {
-			u32 fbs = readl(port_mmio + PORT_FBS);
-			fbs &= ~(PORT_FBS_DEV_MASK | PORT_FBS_DEC);
-			fbs |= CMD->dev->link->pmp << PORT_FBS_DEV_OFFSET;
-			writel(fbs, port_mmio + PORT_FBS);
-			pp->fbs_last_dev = CMD->dev->link->pmp;
+	if(X%3 == 0) {
+		unsigned short i;
+		for(i=0; i<(X%10); i++) { // Flip up to 10 bytes ¯\_(^-^)_/¯
+			bitflip(TF,  sizeof(struct ata_taskfile));
 		}
-		writel(1 << CMD->hw_tag, port_mmio + PORT_CMD_ISSUE);
-		regs->ip = (unsigned long) noret;
-		return;
-		//unsigned short i;
-		//for(i=0; i<100; i++) {
-			//bitflip(CMD, sizeof(struct ata_queued_cmd));
-			//bitflip(TF, sizeof(struct ata_taskfile));
-			//ahciqci_p(CMD);
-			//printk("kvsp: issued fuzzed taskfile");
-		//}
-//	}
+//		printk("kvsp: pre-issue fuzz taskfile");
+		return ahciqci_p(CMD);
+//		printk("kvsp: issued fuzzed taskfile");
+	}
 	//unsigned short X;
 	//get_random_bytes(&X, sizeof(X));
 	//if(X%3 == 0) {
@@ -108,12 +130,14 @@ fopskit_hook_handler(ahci_qc_issue) {
 	// this kills the crab^H^H^H^Hvm
 }
 
-// TODO: Remove the fopskit helper functions and use ftrace directly (?)
+// It's safe to hook these AHCI funcs, cause our VM boot disk is IDE 8^)
 struct fops_hook hook_ahci_qc_issue = fops_hook_val(ahci_qc_issue);
+struct fops_hook hook_ata_tf_to_fis = fops_hook_val(ata_tf_to_fis);
 
 static int __init test_init(void) {
 	printk("kvsp: hooking...");
 	fopskit_sym_hook(&hook_ahci_qc_issue);
+	fopskit_sym_hook(&hook_ata_tf_to_fis);
 	printk("kvsp: okay!");
 	return 0;
 }
@@ -121,6 +145,7 @@ static int __init test_init(void) {
 static void __exit test_exit(void) {
 	printk("kvsp: unhooking...");
 	fopskit_sym_unhook(&hook_ahci_qc_issue);
+	fopskit_sym_unhook(&hook_ata_tf_to_fis);
 	printk("kvsp: bye!");
 }
 
